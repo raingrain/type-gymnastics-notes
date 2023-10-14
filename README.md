@@ -242,10 +242,132 @@ type GetRefPropsRes = GetRefProps<{ ref?: 1, name: 'dong'}>;
 type GetRefPropsRes2 = GetRefProps<{ ref?: undefined, name: 'dong'}>;
 ```
 
+## 二、重新构造做变换
 
+### 给元组或数组类型末尾添加一个新的类型
 
-```typescript```
+- 类型参数 `Arr` 是要修改的数组或元组类型，元素的类型任意，也就是  `unknown` 。
+- 类型参数 `Ele` 是添加的元素的类型。
+- 返回的是用 `Arr` 已有的元素加上 `Ele` 构造的新的元组类型。
 
+```typescript
+type Push<Arr extends  unknown[], Ele> = [...Arr, Ele];
 
+// type PushResult = [1, 2, 3, 4]
+type PushResult = Push<[1, 2, 3], 4>;
+```
 
-```typescript```
+### 给元组或数组类型开头添加一个新的类型
+
+```typescript
+type Unshift<Arr extends  unknown[], Ele> = [Ele, ...Arr];
+
+// type UnshiftResult = [0, 1, 2, 3]
+type UnshiftResult = Unshift<[1, 2, 3], 0>;
+```
+
+### 双元素元组合并
+
+- 两个类型参数 `One` 、 `Other` 是两个元组，类型是 `[unknown, unknown]` ，代表 `2` 个任意类型的元素构成的元组。
+- 通过 `infer` 分别提取 `One` 和 `Other` 的元素到 `infer` 声明的局部变量 `OneFirst` 、`OneSecond` 、 `OtherFirst` 、 `OtherSecond` 里。用提取的元素构造成新的元组返回即可。
+
+```typescript
+type Zip<One extends [unknown, unknown], Other extends [unknown, unknown]> = 
+    One extends [infer OneFirst, infer OneSecond]
+        ? (Other extends [infer OtherFirst, infer OtherSecond]
+            ? [[OneFirst, OtherFirst], [OneSecond, OtherSecond]] : [])
+                : [];
+
+// type ZipResult = [[1, "guang"], [2, "dong"]]                
+type ZipResult = Zip<[1,2], ['guang', 'dong']>;
+```
+
+### 任意元素元组合并
+
+- 类型参数 `One` 、 `Other` 声明为 `unknown[]` ，也就是元素个数任意，类型任意的数组。
+- 每次提取 `One` 和 `Other` 的第一个元素 `OneFirst` 、 `OtherFirst` ，剩余的放到 `OneRest` 、 `OtherRest` 里。
+- 用 `OneFirst` 、 `OtherFirst` 构造成新的元组的一个元素，剩余元素继续递归处理 `OneRest` 、 `OtherRest` 。
+
+```typescript
+type Zip2<One extends unknown[], Other extends unknown[]> = 
+    One extends [infer OneFirst, ...infer OneRest]
+        ? (Other extends [infer OtherFirst, ...infer OtherRest]
+            ? [[OneFirst, OtherFirst], ...Zip2<OneRest, OtherRest>] : [])
+                : [];
+
+// type Zip2Result = [[1, "guang"], [2, "dong"], [3, "is"], [4, "best"], [5, "friend"]]
+type Zip2Result = Zip2<[1,2,3,4,5], ['guang', 'dong', 'is', 'best', 'friend']>;
+```
+
+### 字符串字面量类型首字母大写
+
+- 我们声明了类型参数 `Str` 是要处理的字符串类型，通过 `extends` 约束为 `string` 。
+- 通过 `infer` 提取出首个字符到局部变量 `First` ，提取后面的字符到局部变量 `Rest` 。
+- 然后使用 `TypeScript` 提供的内置高级类型 `Uppercase` 把首字母转为大写，加上 `Rest` ，构造成新的字符串类型返回。
+
+```typescript
+type CapitalizeStr<Str extends string> = Str extends `${infer First}${infer Rest}` ? `${Uppercase<First>}${Rest}` : Str;
+
+// type CapitalizeResult = "Guang"
+type CapitalizeResult = CapitalizeStr<'guang'>;
+```
+
+### 字符串字面量类型下划线转驼峰
+
+- 类型参数 `Str` 是待处理的字符串类型，约束为 `string` 。
+- 提取 `_` 之前和之后的两个字符到 `infer` 声明的局部变量 `Left` 和 `Right` ，剩下的字符放到 `Rest` 里。
+- 然后把右边的字符 `Right` 大写，和 `Left` 构造成新的字符串，剩余的字符 `Rest` 要继续递归的处理。
+
+```typescript
+type CamelCase<Str extends string> = 
+    Str extends `${infer Left}_${infer Right}${infer Rest}`
+        ? `${Left}${Uppercase<Right>}${CamelCase<Rest>}`
+        : Str;
+
+// type CamelCaseResult = "dongDongDong"
+type CamelCaseResult = CamelCase<'dong_dong_dong'>;
+```
+
+### 删除字符串字面量类型中的某个子串
+
+- 类型参数 `Str` 是待处理的字符串， `SubStr` 是要删除的字符串，都通过 `extends` 约束为 `string` 类型。
+- 通过模式匹配提取 `SubStr` 之前和之后的字符串到 `infer` 声明的局部变量 `Prefix`、 `Suffix` 中。
+- 如果不匹配就直接返回 `Str` 。
+- 如果匹配，那就用 `Prefix` 、 `Suffix` 构造成新的字符串，然后继续递归删除 `SubStr` 。直到不再匹配，也就是没有 `SubStr` 了。
+
+```typescript
+type DropSubStr<Str extends string, SubStr extends string> = 
+    Str extends `${infer Prefix}${SubStr}${infer Suffix}` 
+        ? DropSubStr<`${Prefix}${Suffix}`, SubStr> : Str;
+
+// type DropResult = "dong"
+type DropResult = DropSubStr<'dong~~~', '~'>;
+```
+
+### 在已有的函数类型上添加一个参数
+
+- 类型参数 `Func` 是待处理的函数类型，通过 `extends` 约束为 `Function` ， `Arg`` 是要添加的参数类型。
+- 通过模式匹配提取参数到 `infer` 声明的局部变量 `Args` 中，提取返回值到局部变量 `ReturnType` 中。
+- 用 `Args` 数组添加 `Arg` 构造成新的参数类型，结合 `ReturnType` 构造成新的函数类型返回。
+
+```typescript
+type AppendArgument<Func extends Function, Arg> = 
+    Func extends (...args: infer Args) => infer ReturnType 
+        ? (...args: [...Args, Arg]) => ReturnType : never;
+
+// type AppendArgumentResult = (name: string, args_1: number) => boolean
+type AppendArgumentResult  = AppendArgument<(name: string) => boolean, number>;
+```
+
+```typescript
+
+```
+
+```typescript
+
+```
+
+```typescript
+
+```
+
