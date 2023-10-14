@@ -244,6 +244,8 @@ type GetRefPropsRes2 = GetRefProps<{ ref?: undefined, name: 'dong'}>;
 
 ## 二、重新构造做变换
 
+- TypeScript支持 `type` 、 `infer` 、类型参数来保存任意类型，相当于变量的作用。但其实也不能叫变量，因为它们是不可变的。想要变化就需要重新构造新的类型，并且可以在构造新类型的过程中对原类型做一些过滤和变换。数组、字符串、函数、索引类型等都可以用这种方式对原类型做变换产生新的类型。其中索引类型有专门的语法叫做映射类型，对索引做修改的 `as` 叫做重映射。
+
 ### 给元组或数组类型末尾添加一个新的类型
 
 - 类型参数 `Arr` 是要修改的数组或元组类型，元素的类型任意，也就是  `unknown` 。
@@ -359,15 +361,371 @@ type AppendArgument<Func extends Function, Arg> =
 type AppendArgumentResult  = AppendArgument<(name: string) => boolean, number>;
 ```
 
-```typescript
+### 单元素映射成三元素元组
 
+- 类型参数 `Obj` 是待处理的索引类型，通过 `extends` 约束为 `object` 。
+- 用 `keyof` 取出 `Obj` 的索引，作为新的索引类型的索引，也就是 `Key in keyof Obj` 。
+- 值的类型可以做变换，这里我们用之前索引类型的值 `Obj[Key]` 构造成了三个元素的元组类型 `[Obj[Key], Obj[Key], Obj[Key]]` 。
+
+```typescript
+type Mapping<Obj extends object> = { 
+    [Key in keyof Obj]: [Obj[Key], Obj[Key], Obj[Key]]
+}
+
+// type res = {
+//     a: [1, 1, 1];
+//     b: [2, 2, 2];
+// }
+type res = Mapping<{ a: 1, b: 2}>;
+```
+
+### 把索引类型的Key变为大写
+
+- 除了可以对 `Value` 做修改，也可以对 `Key` 做修改，使用 `as` ，这叫做重映射。
+- 类型参数 `Obj` 是待处理的索引类型，通过 `extends` 约束为 `object` 。
+- 新的索引类型的索引为 `Obj` 中的索引，也就是 `Key in keyof Obj` ，但要做一些变换，也就是 `as` 之后的。
+- 通过 `Uppercase` 把索引 `Key` 转为大写，因为索引可能为 `string, number, symbol` 类型，而这里只能接受 `string` 类型，所以要 `& string` ，也就是取索引中 `string` 的部分。
+- `value` 保持不变，也就是之前的索引 `Key` 对应的值的类型 `Obj[Key]` 。
+
+```typescript
+type UppercaseKey<Obj extends object> = { 
+    [Key in keyof Obj as Uppercase<Key & string>]: Obj[Key]
+}
+
+// type UppercaseKeyResult = {
+//     GUANG: 1;
+//     DONG: 2;
+// }
+type UppercaseKeyResult = UppercaseKey<{ guang: 1, dong: 2}>;
+```
+
+### 给索引类型添加只读修饰
+
+- 通过映射类型构造了新的索引类型，给索引加上了 `readonly` 的修饰，其余的保持不变，索引依然为原来的索引 `Key in keyof T` ，值依然为原来的值 `T[Key]` 。
+
+```typescript
+type ToReadonly<T> =  {
+    readonly [Key in keyof T]: T[Key];
+}
+
+// type ReadonlyResult = {
+//     readonly name: string;
+//     readonly age: number;
+// }
+type ReadonlyResult = ToReadonly<{
+    name: string;
+    age: number;
+}>;
+```
+
+### 给索引类型添加可选修饰符
+
+```typescript
+type ToPartial<T> = {
+    [Key in keyof T]?: T[Key]
+}
+
+// type PartialResult = {
+//     name?: string | undefined;
+//     age?: number | undefined;
+// }
+type PartialResult = ToPartial<{
+    name: string;
+    age: number;
+}>;
+```
+
+### 给索引类型的索引去掉只读修饰符
+
+```typescript
+type ToMutable<T> = {
+    -readonly [Key in keyof T]: T[Key]
+}
+
+// type MutableResult = {
+//     name: string;
+//     age: number;
+// }
+type MutableResult =  ToMutable<{
+    readonly name: string;
+    age: number;
+}>;
+```
+
+### 给索引类型的索引去掉可选的修饰
+
+```typescript
+type ToRequired<T> = {
+    [Key in keyof T]-?: T[Key]
+}
+
+// type RequiredResullt = {
+//     name: string;
+//     age: number;
+// }
+type RequiredResullt = ToRequired<{
+    name?: string;
+    age: number;
+}>;
+```
+
+### 构造新索引类型的时候根据值的类型做过滤
+
+- 类型参数 `Obj` 为要处理的索引类型，通过 `extends` 约束为索引为 `string` ，值为任意类型的索引类型 `Record<string, any>` 。
+- 类型参数 `ValueType` 为要过滤出的值的类型。
+- 构造新的索引类型，索引为 `Obj` 的索引，也就是 `Key in keyof Obj` ，但要做一些变换，也就是 `as` 之后的部分。
+- 如果原来索引的值 `Obj[Key]` 是 `ValueType` 类型，索引依然为之前的索引 `Key` ，否则索引设置为 `never` ， `never`` 的索引会在生成新的索引类型时被去掉。
+- 值保持不变，依然为原来索引的值，也就是 `Obj[Key]` 。
+
+```typescript
+type FilterByValueType<Obj extends Record<string, any>, ValueType> = {
+    [Key in keyof Obj 
+        as (Obj[Key] extends ValueType ? Key : never)]
+        : Obj[Key]
+}
+
+interface Person {
+    name: string;
+    age: number;
+    hobby: string[];
+}
+
+// type FilterResult = {
+//     name: string;
+//     age: number;
+// }
+type FilterResult = FilterByValueType<Person, string | number>;
+```
+
+## 三、递归复用做循环
+
+- TypeScript类型系统不支持循环，但支持递归。当处理数量（个数、长度、层数）不固定的类型的时候，可以只处理一个类型，然后递归的调用自身处理下一个类型，直到结束条件也就是所有的类型都处理完了，就完成了不确定数量的类型编程，达到循环的效果。
+- 在类型体操中，遇到数量不确定的问题，要条件反射的想到递归。比如数组长度不确定、字符串长度不确定、索引类型层数不确定等。
+
+### 提取不确定层数的Promise中的value类型
+
+- 类型参数 `P` 是待处理的 `Promise` ，通过 `extends` 约束为 `Promise` 类型， `value` 类型不确定，设为 `unknown` 。
+- 每次只处理一个类型的提取，也就是通过模式匹配提取出 `value` 的类型到 `infer` 声明的局部变量 `ValueType` 中。
+- 然后判断如果 `ValueType` 依然是 `Promise` 类型，就递归处理。
+- 结束条件就是 `ValueType` 不为 `Promise` 类型，那就处理完了所有的层数，返回这时的 `ValueType` 。
+- 其实这个类型的实现可以进一步的简化：不再约束类型参数必须是 `Promise` ，这样就可以少一层判断。
+
+```typescript
+type DeepPromiseValueType<P extends Promise<unknown>> =
+    P extends Promise<infer ValueType> 
+        ? (ValueType extends Promise<unknown>
+            ? DeepPromiseValueType<ValueType>
+            : ValueType)
+        : never;
+
+// type DeepPromiseResult = {
+//     [x: string]: any;
+// }
+type DeepPromiseResult = DeepPromiseValueType<Promise<Promise<Record<string, any>>>>;
+
+type DeepPromiseValueType2<T> = 
+    T extends Promise<infer ValueType> 
+        ? DeepPromiseValueType2<ValueType>
+        : T;
+
+// type DeepPromiseValueType2Res = number
+type DeepPromiseValueType2Res = DeepPromiseValueType2<Promise<Promise<Promise<number>>>>;
+```
+
+### 反转数组类型中的元素
+
+- 类型参数 `Arr` 为待处理的数组类型，元素类型不确定，也就是 `unknown` 。
+- 每次只处理一个元素的提取，放到 `infer` 声明的局部变量 `First` 里，剩下的放到 `Rest` 里。
+- 用 `First` 作为最后一个元素构造新数组，其余元素递归的取。
+- 结束条件就是取完所有的元素，也就是不再满足模式匹配的条件，这时候就返回 `Arr` 。
+
+```typescript
+type ReverseArr<Arr extends unknown[]> = 
+    Arr extends [infer First, ...infer Rest] 
+        ? [...ReverseArr<Rest>, First] 
+        : Arr;
+
+// type ReverseArrResult = [5, 4, 3, 2, 1]
+type ReverseArrResult = ReverseArr<[1,2,3,4,5]>;
+```
+
+### 查找数组中是否存在某个元素
+
+- 类型参数 `Arr` 是待查找的数组类型，元素类型任意，也就是 `unknown` 。 `FindItem` 待查找的元素类型。
+- 每次提取一个元素到 `infer` 声明的局部变量 `First` 中，剩余的放到局部变量 `Rest` 。
+- 判断 `First` 是否是要查找的元素，也就是和 `FindItem` 相等，是的话就返回 `true` ，否则继续递归判断下一个元素。
+- 直到结束条件也就是提取不出下一个元素，这时返回 `false` 。
+- 相等的判断就是 `A` 是 `B` 的子类型并且 `B` 也是 `A` 的子类型。
+
+```typescript
+type Includes<Arr extends unknown[], FindItem> = 
+    Arr extends [infer First, ...infer Rest]
+        ? (IsEqual<First, FindItem> extends true
+            ? true
+            : Includes<Rest, FindItem>)
+        : false;
+
+type IsEqual<A, B> = (A extends B ? true : false) & (B extends A ? true : false);
+
+// type IncludesResult = true
+type IncludesResult = Includes<[1, 2, 3, 4, 5], 4>;
+
+// type IncludesResult2 = false
+type IncludesResult2 = Includes<[1, 2, 3, 4, 5], 6>;
+```
+
+### 在数组中删除指定元素
+
+- 类型参数 `Arr` 是待处理的数组，元素类型任意，也就是 `unknown[]` 。类型参数 `Item` 为待查找的元素类型。类型参数 `Result` 是构造出的新数组，默认值是 `[]` 。
+- 通过模式匹配提取数组中的一个元素的类型，如果是 `Item` 类型的话就删除，也就是不放入构造的新数组，直接返回之前的 `Result` 。
+- 否则放入构造的新数组，也就是再构造一个新的数组 `[...Result, First]` 。
+- 直到模式匹配不再满足，也就是处理完了所有的元素，返回这时候的 `Result` 。
+
+```typescript
+type RemoveItem<Arr extends unknown[], Item, Result extends unknown[] = []> = 
+    Arr extends [infer First, ...infer Rest]
+        ? (IsEqual<First, Item> extends true
+            ? RemoveItem<Rest, Item, Result>
+            : RemoveItem<Rest, Item, [...Result, First]>)
+        : Result;
+
+// type RemoveItemResult = [1, 3]
+type RemoveItemResult = RemoveItem<[1,2,2,3], 2>;
+```
+
+### 根据长度和元素类型构造指定数组
+
+- 类型参数 `Length` 为数组长度，约束为 `number` 。类型参数 `Ele` 为元素类型，默认值为 `unknown` 。类型参数 `Arr` 为构造出的数组，默认值是 `[]` 。
+- 每次判断下 `Arr` 的长度是否到了 `Length` ，是的话就返回 `Arr` ，否则在 `Arr` 上加一个元素，然后递归构造。
+
+```typescript
+type BuildArray<Length extends number, 
+    Ele = unknown, 
+    Arr extends unknown[] = []> =
+    Arr['length'] extends Length 
+        ? Arr 
+        : BuildArray<Length, Ele, [...Arr, Ele]>;
+
+// type BuildArrResult = [unknown, unknown, unknown, unknown, unknown]
+type BuildArrResult = BuildArray<5>;
+```
+
+### 把字符串字面量类型中的某个字符全部替换为另外一个字符
+
+- 类型参数 `Str` 是待处理的字符串类型， `From` 是待替换的字符， `To` 是替换到的字符。
+- 通过模式匹配提取 `From` 左右的字符串到 `infer` 声明的局部变量 `Left` 和 `Right` 里。
+- 用 `Left` 和 `To` 构造新的字符串，剩余的 `Right` 部分继续递归的替换。
+- 结束条件是不再满足模式匹配，也就是没有要替换的元素，这时就直接返回字符串 `Str` 。
+
+```typescript
+type ReplaceAll<Str extends string, 
+    From extends string, 
+    To extends string> = 
+        Str extends `${infer Left}${From}${infer Right}`
+            ? `${Left}${To}${ReplaceAll<Right, From, To>}`
+            : Str;
+
+// type ReplaceAllResult = "dong dong dong"
+type ReplaceAllResult = ReplaceAll<'guang guang guang', 'guang', 'dong'>;
+```
+
+### 把字符串字面量类型的每个字符都提取出来组成联合类型
+
+- 类型参数 `Str` 为待处理的字符串类型，通过 `extends` 约束为 `string` 。
+- 通过模式匹配提取第一个字符到 `infer` 声明的局部变量 `First` ，其余的字符放到局部变量 `Rest` 。
+- 用 `First` 构造联合类型，剩余的元素递归的取。
+
+```typescript
+type StringToUnion<Str extends string> = 
+    Str extends `${infer First}${infer Rest}`
+        ? First | StringToUnion<Rest>
+        : never;
+
+// type StringToUnionResult = "h" | "e" | "l" | "o"
+type StringToUnionResult = StringToUnion<'hello'>;
+```
+
+### 字符串类型的反转
+
+- 类型参数 `Str` 为待处理的字符串。类型参数 `Result` 为构造出的字符，默认值是空串。
+- 通过模式匹配提取第一个字符到 `infer` 声明的局部变量 `First` ，其余字符放到 `Rest` 。
+- 用 `First` 和之前的 `Result` 构造成新的字符串，把 `First` 放到前面，因为递归是从左到右处理，那么不断往前插就是把右边的放到了左边，完成了反转的效果。
+- 直到模式匹配不满足，就处理完了所有的字符。
+
+```typescript
+type ReverseStr<Str extends string, 
+    Result extends string = ''> = 
+    Str extends `${infer First}${infer Rest}` 
+        ? ReverseStr<Rest, `${First}${Result}`> 
+        : Result;
+
+// type ReverseStrResult = "olleh"
+type ReverseStrResult = ReverseStr<'hello'>;
+```
+
+### 给嵌套对象添加只读修饰符
+
+- 类型参数 `Obj` 是待处理的索引类型，约束为 `Record<string, any>` ，也就是索引为 `string` ，值为任意类型的索引类型。
+- 索引映射自之前的索引，也就是 `Key in keyof Obj` ，只不过加上了 `readonly` 的修饰。
+- 值要做下判断，如果是 `object` 类型并且还是 `Function` ，那么就直接取之前的值 `Obj[Key]` 。
+- 如果是 `object` 类型但不是 `Function` ，那就是说也是一个索引类型，就递归处理 `DeepReadonly<Obj[Key]>` 。
+- 否则，值不是 `object` 就直接返回之前的值 `Obj[Key]` 。
+
+```typescript
+type DeepReadonly<Obj extends Record<string, any>> =
+    Obj extends any
+        ? {
+            readonly [Key in keyof Obj]:
+                Obj[Key] extends object
+                    ? (Obj[Key] extends Function
+                        ? Obj[Key] 
+                        : DeepReadonly<Obj[Key]>)
+                    : Obj[Key]
+        }
+        : never;
+
+type obj = {
+    a: {
+        b: {
+            c: {
+                f: () => 'dong',
+                d: {
+                    e: {
+                        guang: string
+                    }
+                }
+            }
+        }
+    }
+}
+
+// type DeepReadonlyResult = {
+//     readonly a: {
+//         readonly b: {
+//             readonly c: {
+//                 readonly f: () => 'dong';
+//                 readonly d: {
+//                     readonly e: {
+//                         readonly guang: string;
+//                     };
+//                 };
+//             };
+//         };
+//     };
+// }
+type DeepReadonlyResult = DeepReadonly<obj>;
 ```
 
 ```typescript
 
 ```
 
+
 ```typescript
 
 ```
 
+
+```typescript
+
+```
