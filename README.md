@@ -1429,8 +1429,31 @@ type ParseQueryStringResult = ParseQueryString<'a=1&a=2&b=2&c=3'>;
 
 ```
 
-```typescript
+### Uppercase、Lowercase、Capitalize、Uncapitalize
 
+- 这四个类型是分别实现大写、小写、首字母大写、去掉首字母大写的。
+- 它们的源码中的 `intrinsic` 是固有的意思，就像js里面的有的方法打印会显示 `[native code]` 一样。这部分类型不是在ts里实现的，而是编译过程中由js实现的。其实就是ts编译器处理到这几个类型时就直接用js给算出来了。为啥要这样做呢？因为快啊，解析类型是要处理 `AST` 的，性能比较差，用js直接给算出来那多快呀。
+
+```typescript
+type Uppercase<S extends string> = intrinsic;
+
+type Lowercase<S extends string> = intrinsic;
+
+type Capitalize<S extends string> = intrinsic;
+
+type Uncapitalize<S extends string> = intrinsic;
+
+// type UppercaseRes = "AAAA"
+type UppercaseRes = Uppercase<'aaaa'>;
+
+// type LowercaseRes = "aaa"
+type LowercaseRes = Lowercase<'AAA'>;
+
+// type CapitalizeRes = "Aaa"
+type CapitalizeRes = Capitalize<'aaa'>;
+
+// type UncapitalizeRes = "aaa"
+type UncapitalizeRes = Uncapitalize<'Aaa'>;
 ```
 
 
