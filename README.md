@@ -1404,29 +1404,295 @@ type ParseQueryStringResult = ParseQueryString<'a=1&a=2&b=2&c=3'>;
 
 ## 八、内置高级类型
 
-```typescript
+### Parameters
 
+- `Parameters` 用于提取函数类型的参数类型。
+- 类型参数 `T` 为待处理的类型，通过 `extends` 约束为函数，参数和返回值任意。通过 `extends` 匹配一个模式类型，提取参数的类型到 `infer` 声明的局部变量 `P` 中返回。
+
+```typescript
+type Parameters<T extends (...args: any) => any> 
+    = T extends (...args: infer P) => any 
+        ? P 
+        : never;
+
+// type ParametersRes = [name: string, age: number]
+type ParametersRes = Parameters<(name: string, age: number) => {}>;
 ```
 
-```typescript
+### ReturnType
 
+- `ReturnType` 用于提取函数类型的返回值类型。
+- 类型参数 `T` 为待处理的类型，通过 `extends` 约束为函数类型，参数和返回值任意。用 `T` 匹配一个模式类型，提取返回值的类型到 `infer` 声明的局部变量 `R` 里返回。
+
+```typescript
+type ReturnType<T extends (...args: any) => any> 
+    = T extends (...args: any) => infer R 
+        ? R 
+        : any;
+
+// type ReturnTypeRes = "dong"
+type ReturnTypeRes = ReturnType<() => 'dong'>;
 ```
 
+### ConstructorParameters
+
+- 构造器类型和函数类型的区别就是可以被 `new` 。
+- `Parameters` 用于提取函数参数的类型，而 `ConstructorParameters` 用于提取构造器参数的类型。
+- 类型参数 `T` 是待处理的类型，通过 `extends` 约束为构造器类型，加个 `abstract` 代表不能直接被实例化（其实不加也行）。用 `T` 匹配一个模式类型，提取参数的部分到 `infer` 声明的局部变量 `P` 里，返回 `P` 。
 
 ```typescript
+type ConstructorParameters<
+    T extends abstract new (...args: any) => any
+> = T extends abstract new (...args: infer P) => any 
+    ? P 
+    : never;
 
+interface Person {
+    name: string;
+}
+
+interface PersonConstructor {
+    new(name: string): Person;
+}
+
+// type ConstructorParametersRes = [name: string]
+type ConstructorParametersRes = ConstructorParameters<PersonConstructor>;
 ```
 
-```typescript
+### InstanceType
 
+- 提取了构造器参数的类型，自然也可以提取构造器返回值的类型，就是 `InstanceType` 。
+- 整体和 `ConstructorParameters` 差不多，只不过提取的不再是参数了，而是返回值。通过模式匹配提取返回值的类型到 `infer` 声明的局部变量 `R` 里返回。
+
+```typescript
+type InstanceType<
+    T extends abstract new (...args: any) => any
+> = T extends abstract new (...args: any) => infer R 
+    ? R 
+    : any;
+
+interface Person {
+    name: string;
+}
+
+interface PersonConstructor {
+    new(name: string): Person;
+}
+
+// type InstanceTypeRes = Person
+type InstanceTypeRes = InstanceType<PersonConstructor>;
 ```
 
-```typescript
+### ThisParameterType
 
+- 函数里可以调用 `this` ，这个 `this` 的类型也可以约束。同样 `this` 的类型也可以提取出来，通过 `ThisParameterType` 这个内置的高级类型。
+- 类型参数 `T` 为待处理的类型。用 `T` 匹配一个模式类型，提取 `this` 的类型到 `infer` 声明的局部变量 `U` 里返回。
+
+```typescript
+type ThisParameterType<T> = 
+    T extends (this: infer U, ...args: any[]) => any 
+        ? U 
+        : unknown;
+
+interface Person {
+    name: string;
+}
+
+function hello(this: Person) {
+    console.log(this.name);
+}
+
+// type ThisParameterTypeRes = Person
+type ThisParameterTypeRes = ThisParameterType<typeof hello>;
 ```
 
-```typescript
+### OmitThisParameter
 
+- 提取出 `this` 的类型之后，自然可以构造一个新的，比如删除 `this` 的类型可以用 `OmitThisParameter` 。
+- 类型参数 `T` 为待处理的类型。用 `ThisParameterType` 提取 `T` 的 `this` 类型，如果提取出来的类型是 `unknown` 或者 `any` ，那么 `unknown extends ThisParameterType` 就成立，也就是没有指定 `this` 的类型，所以直接返回 `T` 。否则，就通过模式匹配提取参数和返回值的类型到 `infer` 声明的局部变量 `A` 和 `R` 中，用它们构造新的函数类型返回。这样，就实现了去掉 this 类型的目的。
+
+```typescript
+type OmitThisParameter<T> = 
+    unknown extends ThisParameterType<T> 
+        ? T 
+        : T extends (...args: infer A) => infer R 
+            ? (...args: A) => R 
+            : T;
+
+interface Person {
+    name: string;
+}
+
+function say(this: Person, age: number) {
+    console.log(this.name);
+    return this.name + ' ' + age;
+}
+
+// type OmitThisParameterRes = (age: number) => string
+type OmitThisParameterRes = OmitThisParameter<typeof say>;
+```
+
+### Partial
+
+- 索引类型可以通过映射类型的语法做修改，比如把索引变为可选。
+- 类型参数 `T` 为待处理的类型。通过映射类型的语法构造一个新的索引类型返回，索引 `P` 是来源于之前的 `T` 类型的索引，也就是 `P in keyof T` ，索引值的类型也是之前的，也就是 `T[P]` 。
+
+```typescript
+type Partial<T> = {
+    [P in keyof T]?: T[P];
+};
+
+// type PartialRes = {
+//     name?: "dong" | undefined;
+//     age?: 18 | undefined;
+// }
+type PartialRes = Partial<{name: 'dong', age: 18}>;
+```
+
+### Required
+
+- 可以把索引变为可选，也同样可以去掉可选，也就是 `Required` 类型。
+- 类型参数 `T` 为待处理的类型。通过映射类型的语法构造一个新的索引类型，索引取自之前的索引，也就是 `P in keyof T` ，但是要去掉可选，也就是 `-?` ，值的类型也是之前的，就是 `T[P]` 。
+
+```typescript
+type Required<T> = {
+    [P in keyof T]-?: T[P];
+};
+
+// type RequiredRes = {
+//     name: 'dong';
+//     age: 18;
+// }
+type RequiredRes = Required<{name?: 'dong', age?: 18}>;
+```
+
+### Readonly
+
+- 同样的方式，也可以添加 `readonly` 的修饰。
+- 类型参数 `T` 为待处理的类型。通过映射类型的语法构造一个新的索引类型返回，索引和值的类型都是之前的，也就是 `P in keyof T` 和 `T[P]` ，但是要加上 `readonly` 的修饰。
+
+```typescript
+type Readonly<T> = {
+    readonly [P in keyof T]: T[P];
+};
+
+// type ReadonlyRes = {
+//     readonly name: 'dong';
+//     readonly age: 18;
+// }
+type ReadonlyRes = Readonly<{name: 'dong', age: 18}>;
+```
+
+### Pick
+
+- 映射类型的语法用于构造新的索引类型，在构造的过程中可以对索引和值做一些修改或过滤。
+- 类型参数 `T` 为待处理的类型，类型参数 `K` 为要过滤出的索引，通过 `extends` 约束为只能是 `T` 的索引的子集。构造新的索引类型返回，索引取自 `K` ，也就是 `P in K` ，值则是它对应的原来的值，也就是 `T[P]` 。
+
+```typescript
+type Pick<T, K extends keyof T> = {
+    [P in K]: T[P];
+};
+
+// type PickRes = {
+//     name: 'dong';
+//     age: 18;
+// }
+type PickRes = Pick<{name: 'dong', age: 18, sex: 1}, 'name' | 'age'>;
+```
+
+### Record
+
+- `Record` 用于创建索引类型，传入 `key` 和值的类型。
+- 它用映射类型的语法创建了新的索引类型，索引来自 `K` ，也就是 `P in K` ，值是传入的 `T` 。这里很巧妙的用到了 `keyof any` ，它的结果是 `string | number | symbol` 。但如果你开启了 `keyOfStringsOnly` 的编译选项，它就只是 `stirng` 了。用 `keyof any` 是动态获取的，比直接写死 `string | number | symbol` 更好。
+- 当传入的 `K` 是 `string | number | symbol` ，那么创建的就是有可索引签名的索引类型：
+
+```typescript
+type Record<K extends keyof any, T> = {
+    [P in K]: T;
+};
+
+// type RecordRes = {
+//     a: number;
+//     b: number;
+// }
+type RecordRes = Record<'a' | 'b', number>;
+
+// type RecordRes2 = {
+//     [x: string]: number;
+// }
+type RecordRes2 = Record<string, number>;
+```
+
+### Exclude
+
+- 当想从一个联合类型中去掉一部分类型时，可以用 `Exclude` 类型。
+- 联合类型当作为类型参数出现在条件类型左边时，会被分散成单个类型传入，这叫做分布式条件类型。所以写法上可以简化， `T extends U` 就是对每个类型的判断。过滤掉 `U` 类型，剩下的类型组成联合类型。也就是取差集。
+
+```typescript
+type Exclude<T, U> = T extends U ? never : T;
+
+// type ExcludeRes = "c" | "d"
+type ExcludeRes = Exclude<'a' | 'b' | 'c' | 'd', 'a' | 'b'>;
+```
+
+### Extract
+
+- 可以过滤掉，自然也可以保留， `Exclude` 反过来就是 `Extract` ，也就是取交集。
+
+```typescript
+type Extract<T, U> = T extends U ? T : never;
+
+// type ExtractRes = "a" | "b"
+type ExtractRes = Extract<'a' | 'b' | 'c' | 'd', 'a' | 'b'>;
+```
+
+### Omit
+
+- 我们知道了 `Pick` 可以取出索引类型的一部分索引构造成新的索引类型，那反过来就是去掉这部分索引构造成新的索引类型。可以结合 `Exclude` 来轻松实现。
+- 类型参数 `T` 为待处理的类型，类型参数 `K` 为索引允许的类型（ `string | number | symbol` 或者 `string` ）。通过 `Pick` 取出一部分索引构造成新的索引类型，这里用 `Exclude` 把 `K` 对应的索引去掉，把剩下的索引保留。
+
+```typescript
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+
+// type OmitRes = {
+//     age: 20;
+// }
+type OmitRes = Omit<{name:'guang', age: 20}, 'name'>;
+```
+
+### Awaited
+
+- 在递归那节我们写过取 `Promise` 的 `ValuType` 的高级类型，这个比较常用， `ts` 也给内置了，就是 `Awaited` 。
+- 类型参数 `T` 是待处理的类型。如果 `T` 是 `null` 或者 `undefined` ，就返回 `T` 。如果 `T` 是对象并且有 `then` 方法，那就提取 `then` 的参数，也就是 `onfulfilled` 函数的类型到 `infer` 声明的局部变量 `F` 。继续提取 `onfullfilled` 函数类型的第一个参数的类型，也就是 `Promise` 返回的值的类型到 `infer` 声明的局部变量 `V` 。递归的处理提取出来的 `V` ，直到不再满足上面的条件。
+
+```typescript
+type Awaited<T> =
+    T extends null | undefined
+        ? T 
+        : (T extends object & { then(onfulfilled: infer F): any }
+            ? (F extends ((value: infer V, ...args: any) => any)
+                ? Awaited<V>
+                : never) 
+            : T);
+
+// type AwaitedRes = number
+type AwaitedRes = Awaited<Promise<Promise<Promise<number>>>>;
+```
+
+### NonNullable
+
+- `NonNullable` 就是用于判断是否为非空类型，也就是不是 `null` 或者 `undefined` 的类型的，实现比较简单。
+
+```typescript
+type NonNullable<T> = T extends null | undefined ? never : T;
+
+// type NonNullableRes = never
+type NonNullableRes = NonNullable<null>;
+
+// type NonNullableRes2 = {
+//     name: 'guang';
+// }
+type NonNullableRes2 = NonNullable<{name: 'guang'}>;
 ```
 
 ### Uppercase、Lowercase、Capitalize、Uncapitalize
