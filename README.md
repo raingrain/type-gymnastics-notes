@@ -765,7 +765,7 @@ type Subtract<Num1 extends number, Num2 extends number> =
 type SubtractResult = Subtract<33, 12>;
 ```
 
-### 乘法
+### 乘
 
 - 类型参数 `Num1` 和 `Num2` 分别是被加数和加数。
 - 因为乘法是多个加法结果的累加，我们加了一个类型参数 `ResultArr` 来保存中间结果，默认值是 `[]` ，相当于从 `0` 开始加。
