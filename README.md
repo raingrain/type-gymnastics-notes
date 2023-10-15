@@ -1,5 +1,7 @@
 # 类型体操
 
+---
+
 ## 一、模式匹配做提取
 
 - 模式匹配是通过类型 `extends` 一个模式类型，把需要提取的部分放到通过 `infer` 声明的局部变量里，后面可以从这个局部变量拿到类型做各种后续处理。
@@ -2372,3 +2374,10 @@ obj.e = 1;
 
 - 像java里面的类型都是通过 `extends` 继承的，如果 `A extends B` ，那 `A` 就是 `B` 的子类型。这种叫做名义类型系统（nominal type）。
 - 而ts里不看这个，只要结构上是一致的，那么就可以确定父子关系，这种叫做结构类型系统（structual type）。
+
+---
+
+## References
+
+1. [TypeScript 类型体操通关秘籍](https://juejin.cn/book/7047524421182947366)
+2. [Type Challenges](https://github.com/type-challenges)
