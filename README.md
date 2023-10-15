@@ -1316,11 +1316,13 @@ type ReverseArrRes = ReverseArr<arrType2>;
 // 类型参数 Param 类单个的 query param，比如 a=1 这种。
 // 通过模式匹配提取 key 和 value 到 infer 声明的局部变量 Key、Value 里。
 // 通过映射类型语法构造成索引类型返回：
+// 当提取 a=1 中的 key 和 value，构造成索引类型的时候，如果提取不出来，之前返回的是空对象，现在改成了 Record<string, any>。
+// 因为 ParseQueryString 是针对字符串字面量类型做运算的，如果传入的不是字面量类型，而是 string，那就会走到这里，如果返回空对象，那取它的任何属性都会报错。
 type ParseParam<Param extends string> = 
     Param extends `${infer Key}=${infer Value}`
         ? {
             [K in Key]: Value 
-        } : {};
+        } : Record<string, any>;;
 
 // type ParseParamResult = {
 //     a: "1";
@@ -1379,28 +1381,591 @@ type ParseQueryString<Str extends string> =
 //     c: "3";
 // }
 type ParseQueryStringResult = ParseQueryString<'a=1&a=2&b=2&c=3'>;
+
+function parseQueryString<Str extends string>(queryStr: Str): ParseQueryString<Str> ;
+function parseQueryString(queryStr: string) {
+    if (!queryStr || !queryStr.length) {
+        return {};
+    }
+    const queryObj:Record<string, any> = {};
+    const items = queryStr.split('&');
+    items.forEach(item => {
+        const [key, value] = item.split('=');
+        if (queryObj[key]) {
+            if(Array.isArray(queryObj[key])) {
+                queryObj[key].push(value);
+            } else {
+                queryObj[key] = [queryObj[key], value]
+            }
+        } else {
+            queryObj[key] = value;
+        }
+    });
+    return queryObj;
+}
+
+// const res: MergeParams<{
+//     a: "1";
+// }, MergeParams<{
+//     b: "2";
+// }, {
+//     c: "3";
+// }>>
+const res = parseQueryString('a=1&b=2&c=3');
 ```
+
+### Promising.all
 
 ```typescript
+// all
+// 类型参数 T 是待处理的 Promise 数组，约束为 unknown[] 或者空数组 []。
+// 这个类型参数 T 就是传入的函数参数的类型。
+// 返回一个新的数组类型，也可以用映射类型的语法构造个新的索引类型（class、对象、数组等聚合多个元素的类型都是索引类型）。
+// 新的索引类型的索引来自之前的数组 T，也就是 P in keyof T，值的类型是之前的值的类型，但要做下 Promise 的 value 类型提取，用内置的高级类型 Awaited，也就是 Awaited<T[P]>。
+// 同时要把 readonly 的修饰去掉，也就是 -readonly。
+// 这就是 Promise.all 的类型定义。因为返回值的类型和参数的类型是有关联的，所以必然会用到类型编程。
 
+// race
+// 类型参数 T 是待处理的参数的类型，约束为 unknown[] 或者空数组 []。
+// 返回值的类型可能是传入的任何一个 Promise 的 value 类型，那就先取出所有的 Promise 的 value 类型，也就是 T[number]。
+// 因为数组类型也是索引类型，所以可以用索引类型的各种语法。
+// 用 Awaited 取出这个联合类型中的每一个类型的 value 类型，也就是 Awaited<T[number]>，这就是 race 方法的返回值的类型。
+// 同样，因为返回值的类型是由参数的类型做一些类型运算得到的，也离不开类型编程。
+
+// 这里 T 的类型约束为什么是 unknown[] | []
+// ts 里有个 as const 的语法，加上之后，ts 就会推导出常量字面量类型，否则推导出对应的基础类型
+// 这里类型参数 T 是通过 js 函数的参数传入的，然后取 typeof，也会遇到 as const 的这个问题，约束为 unknown[] | [] 就是 as const 的意思。
+interface PromiseConstructor {
+    all<T extends readonly unknown[] | []>
+        (values: T): Promise<{
+            -readonly [P in keyof T]: Awaited<T[P]>
+        }>;
+
+    race<T extends readonly unknown[] | []>
+        (values: T): Promise<Awaited<T[number]>>;
+}
+
+declare const promise: PromiseConstructor;
+
+// 因为 Promise.all 是等所有 promise 执行完一起返回，Promise.race 是有一个执行完就返回。返回的类型都需要用到参数 Promise 的 value 类型
+
+// const allRes: Promise<[number, number, number]>
+const allRes = promise.all([Promise.resolve(1), Promise.resolve(2), Promise.resolve(3)]);
+
+// const raceRes: Promise<number>
+const raceRes = promise.race([Promise.resolve(1), Promise.resolve(2), Promise.resolve(3)]);
+
+// type res = Promise<1> | Promise<2> | Promise<3>
+type res = [Promise<1>,Promise<2>,Promise<3>][number];
 ```
+
+### currying
 
 ```typescript
+// curring 函数有一个类型参数 Func，由函数参数的类型指定。
+// 返回值的类型要对 Func 做一些类型运算，通过模式匹配提取参数和返回值的类型，传入 CurriedFunc 来构造新的函数类型。
+// 构造的函数的层数不确定，所以要用递归，每次提取一个参数到 infer 声明的局部变量 Arg，其余参数到 infer 声明的局部变量 Rest。
+// 用 Arg 作为构造的新的函数函数的参数，返回值的类型继续递归构造。
+// 这样就递归提取出了 Params 中的所有的元素，递归构造出了柯里化后的函数类型。
+type CurriedFunc<Params, Return> = 
+    Params extends [infer Arg, ...infer Rest]
+        ? (arg: Arg) => CurriedFunc<Rest, Return>
+        : never;
 
+declare function currying<Func>(fn: Func): 
+    Func extends (...args: infer Params) => infer Result ? CurriedFunc<Params, Result> : never;
+
+const func = (a: string, b: number, c: boolean) => {};
+
+// const curriedFunc: (arg: string) => (arg: number) => (arg: boolean) => never
+const curriedFunc = currying(func);
 ```
+
+### 中划线命名转驼峰命名KebabCaseToCamelCase
+
+- 类型参数 `Str` 是待处理的字符串类型，约束为 `string` 。
+- 通过模式匹配提取 `Str` 中 `-` 分隔的两部分，前面的部分放到 `infer` 声明的局部变量 `Item` 里，后面的放到 `infer` 声明的局部变量 `Rest` 里。
+- 提取的第一个单词不大写，后面的字符串首字母大写，然后递归的这样处理，然后也就是 `${Item}${KebabCaseToCamelCase<Capitalize>` 。
+- 如果模式匹配不满足，就返回 `Str` 。
 
 ```typescript
+// KebabCaseToCamelCase
+type KebabCaseToCamelCase<Str extends string> = 
+    Str extends `${infer Item}-${infer Rest}` 
+        ? `${Item}${KebabCaseToCamelCase<Capitalize<Rest>>}`
+        : Str;
 
+// type KebabCaseToCamelCaseRes = "guangAndDong"
+type KebabCaseToCamelCaseRes = KebabCaseToCamelCase<'guang-and-dong'>;
 ```
+
+### 驼峰命名转中划线命名CamelCaseToKebabCase
+
+- 类型参数 `Str` 为待处理的字符串类型。
+- 通过模式匹配提取首个字符到 `infer` 声明的局部变量 `First` ，剩下的放到 `Rest` 。
+- 判断下当前字符是否是小写，如果是的话就不需要转换，递归处理后续字符，也就是 `${First}${CamelCaseToKebabCase}`。
+- 如果是大写，那就找到了要分割的地方，转为 - 分割的形式，然后把 First 小写，后面的字符串递归的处理，也就是 `-${Lowercase}${CamelCaseToKebabCase}`。
+- 如果模式匹配不满足，就返回 `Str` 。
 
 ```typescript
+// CamelCaseToKebabCase
+type CamelCaseToKebabCase<Str extends string> = 
+    Str extends `${infer First}${infer Rest}`
+        ? (First extends Lowercase<First> 
+            ? `${First}${CamelCaseToKebabCase<Rest>}`
+            : `-${Lowercase<First>}${CamelCaseToKebabCase<Rest>}`)
+        : Str;
 
+// type CamelCaseToKebabCaseRes = "guang-and-dong"
+type CamelCaseToKebabCaseRes = CamelCaseToKebabCase<'guangAndDong'>;
 ```
+
+### Chunk分组类型
+
+- 类型参数 `Arr` 为待处理的数组类型，约束为 `unknown` 。类型参数 `ItemLen` 是每个分组的长度。
+- 后两个类型参数是用于保存中间结果的：类型参数 `CurItem` 是当前的分组，默认值 `[]` ，类型参数 `Res` 是结果数组，默认值 `[]` 。
+- 通过模式匹配提取 `Arr` 中的首个元素到 `infer` 声明的局部变量 `First` 里，剩下的放到 `Rest` 里。
+- 通过 `CurItem` 的 `length` 判断是否到了每个分组要求的长度 `ItemLen` ：
+  - 如果到了，就把 `CurItem` 加到当前结果 `Res` 里，也就是 `[...Res, CurItem]` ，然后开启一个新分组，也就是 `[First]` 。
+  - 如果没到，那就继续构造当前分组，也就是 `[...CurItem, First]` ，当前结果不变，也就是 `Res` 。
+- 这样递归的处理，直到不满足模式匹配，那就把当前 `CurItem` 也放到结果里返回，也就是 `[...Res, CurItem]` 。
 
 ```typescript
+type Chunk<
+    Arr extends unknown[], 
+    ItemLen extends number, 
+    CurItem extends unknown[] = [], 
+    Res extends unknown[] = []
+> = Arr extends [infer First, ...infer Rest] 
+    ? CurItem['length'] extends ItemLen 
+        ?  Chunk<Rest, ItemLen, [First], [...Res, CurItem]> 
+        : Chunk<Rest, ItemLen, [...CurItem, First], Res> 
+    : [...Res, CurItem]
 
+// type ChunkRes = [[1, 2], [3, 4], [5]]
+type ChunkRes = Chunk<[1,2,3,4,5], 2>;
 ```
 
+### TupleToNestedObject
+
+- 类型参数 `Tuple` 为待处理的元组类型，元素类型任意，约束为 `unknown[]` 。类型参数 `Value` 为值的类型。
+- 通过模式匹配提取首个元素到 `infer` 声明的局部变量 `First` ，剩下的放到 `infer` 声明的局部变量 `Rest` 。
+- 用提取出来的 `First` 作为 `Key` 构造新的索引类型，也就是 `Key in First` ，值的类型为 `Value` ，如果 `Rest` 还有元素的话就递归的构造下一层。
+- 为什么后面还有个 `as Key extends keyof any ? Key : never` 的重映射呢？
+- 因为比如 `null` 、 `undefined` 等类型是不能作为索引类型的 `key` 的，就需要做下过滤，如果是这些类型，就返回 `never` ，否则返回当前 `Key` 。
+
+```typescript
+type TupleToNestedObject<Tuple extends unknown[], Value> = 
+    Tuple extends [infer First, ...infer Rest]
+      ? {
+          [Key in First as Key extends keyof any ? Key : never]: 
+              Rest extends unknown[]
+                  ? TupleToNestedObject<Rest, Value>
+                  : Value
+      }
+      : Value;
+
+// type TupleToNestedObjectRes = {
+//     guang: {
+//         and: {
+//             dong: 1;
+//         };
+//     };
+// }
+type TupleToNestedObjectRes = TupleToNestedObject<['guang', 'and','dong'], 1>;
+
+// type TupleToNestedObjectRes2 = {
+//     guang: {
+//         and: {
+//             [x: number]: {
+//                 dong: 1;
+//             };
+//         };
+//     };
+// }
+type TupleToNestedObjectRes2 = TupleToNestedObject<['guang', 'and', number,'dong'], 1>;
+
+// type TupleToNestedObjectRes3 = {
+//     guang: {
+//         and: {};
+//     };
+// }
+type TupleToNestedObjectRes3 = TupleToNestedObject<['guang', 'and', undefined,'dong'], 1>;
+```
+
+### PartialObjectPropByKeys
+
+- 把一个索引类型的某些 `Key` 转为可选的，其余的 `Key` 不变。
+- 我们先把需要的 `Key` 摘出来构造一个新的索引类型，然后把剩下的 `Key` 摘出来构造一个新的索引类型，把第一个索引类型转为 `Partial` ，第二个索引类型不变，然后取交叉类型。交叉类型会把同类型做合并，不同类型舍弃，所以结果就是我们需要的索引类型。
+- 类型参数 `Obj` 为待处理的索引类型，约束为 `Record<string, any>` 。类型参数 `Key` 为要转为可选的索引，那么类型自然是 `string | number |  symbol` 中的类型，通过 `keyof any` 来约束更好一些。默认值是 `Obj` 的索引。
+
+```typescript
+interface Dong {
+    name: string
+    age: number
+    address: string
+}
+
+// 为啥这里没显示最终的类型呢？
+// 因为 ts 只有在类型被用到的时候才会去做类型计算，根据这个特点，我们可以用映射类型的语法构造一个一摸一样的索引类型来触发类型计算。
+type Copy<Obj extends Record<string, any>> = {
+    [Key in keyof Obj]:Obj[Key]
+}
+
+type PartialObjectPropByKeys<
+    Obj extends Record<string, any>,
+    Key extends keyof any = keyof Obj
+> = Copy<Partial<Pick<Obj,Extract<keyof Obj, Key>>> & Omit<Obj,Key>>;
+
+// type PartialObjectPropByKeysRes = {
+//     name?: string | undefined;
+//     age?: number | undefined;
+//     address: string;
+// }
+type PartialObjectPropByKeysRes = PartialObjectPropByKeys<Dong, 'name' | 'age'>;
+```
+
+### 联合类型转成元组类型UnionToTuple
+
+- 联合类型的处理之所以麻烦，是因为不能直接 `infer` 来取其中的某个类型，我们是利用了取重载函数的返回值类型拿到的是最后一个重载类型的返回值这个特性，把联合类型转成交叉类型来构造重载函数，然后取返回值类型的方式来取到的最后一个类型。然后加上递归，就实现了所有类型的提取。
+
+```typescript
+type UnionToIntersection<U> = 
+    (U extends U ? (x: U) => unknown : never) extends (x: infer R) => unknown
+        ? R
+        : never
+
+// 类型参数 T 为待处理的联合类型。
+// T extends any 触发了分布式条件类型，会把每个类型单独传入做计算，把它构造成函数类型，然后转成交叉类型，达到函数重载的效果。
+// 通过模式匹配提取出重载函数的返回值类型，也就是联合类型的最后一个类型，放到数组里。
+// 通过 Exclude 从联合类型中去掉这个类型，然后递归的提取剩下的。
+type UnionToTuple<T> = 
+    UnionToIntersection<
+        T extends any ? () => T : never
+    > extends () => infer ReturnType
+        ? [...UnionToTuple<Exclude<T, ReturnType>>, ReturnType]
+        : [];
+
+// type UnionToTupleRes = ["a", "b", "c"]
+type UnionToTupleRes = UnionToTuple<'a' | 'b' | 'c'>;
+```
+
+### join
+
+- 有这样一个 `join` 函数，它是一个高阶函数，第一次调用传入分隔符，第二次传入多个字符串，然后返回它们 `join` 之后的结果。如果要给这样一个 `join` 函数加上类型定义应该怎么加呢？要求精准的提示函数返回值的类型。
+
+```typescript
+// 类型参数 `Delimiter` 是第一次调用的参数的类型，约束为 `string` 。
+// `join` 的返回值是一个函数，也有类型参数。类型参数 `Items` 是返回的函数的参数类型。
+// 返回的函数类型的返回值是 `JoinType` 的计算结果，传入两次函数的参数 `Delimiter` 和 `Items` 。
+// 这里的 JoinType 的实现就是根据字符串元组构造字符串，用到提取和构造，因为数量不确定，还需要递归。
+declare function join<
+    Delimiter extends string
+>(delimiter: Delimiter):
+    <Items extends string[]>
+        (...parts: Items) => JoinType<Items, Delimiter>;
+
+type RemoveFirstDelimiter<Str extends string> = Str extends `${infer _}${infer Rest}` ? Rest: Str;
+
+// 类型参数 Items 和 Delimiter 分别是字符串元组和分割符的类型。Result 是用于在递归中保存中间结果的。
+// 通过模式匹配提取 Items 中的第一个元素的类型到 infer 声明的局部变量 Cur，后面的元素的类型到 Rest。
+// 构造字符串就是在之前构造出的 Result 的基础上，加上新的一部分 Delimiter 和 Cur，然后递归的构造。这里提取出的 Cur 是 unknown 类型，要 & string 转成字符串类型。
+// 如果不满足模式匹配，也就是构造完了，那就返回 Result，但是因为多加了一个 Delimiter，要去一下。
+type JoinType<
+    Items extends any[],
+    Delimiter extends string,
+    Result extends string = ''
+> = Items extends [infer Cur, ...infer Rest]
+        ? JoinType<Rest, Delimiter, `${Result}${Delimiter}${Cur & string}`>
+        : RemoveFirstDelimiter<Result>;
+
+// let res: "guang-and-dong"
+let res = join('-')('guang', 'and', 'dong');
+```
+
+### DeepCamelize
+
+- 所有的 `key` 下划线转驼峰。
+
+```typescript
+// 其中的 CamelizeArr 的实现就是递归处理每一个元素：
+// 通过模式匹配提取 Arr 的第一个元素的类型到 First，剩余元素的类型到 Rest。
+// 处理 First 放到数组中，剩余的递归处理。
+type CamelizeArr<Arr> = Arr extends [infer First, ...infer Rest]
+    ? [DeepCamelize<First>, ...CamelizeArr<Rest>]
+    : []
+
+// 类型参数 Obj 为待处理的索引类型，约束为 Record<string, any>。
+// 判断下是否是数组类型，如果是的话，用 CamelizeArr 处理。
+// 否则就是索引类型，用映射类型的语法来构造新的索引类型，Key 为之前的 Key，也就是 Key in keyof Obj，但要做一些变化，也就是 as 重映射之后的部分。
+// 这里的 KebabCase 转 CamelCase 就是提取 _ 之前的部分到 First，之后的部分到 Rest，然后构造新的字符串字面量类型，对 Rest 部分做首字母大写，也就是 Capitialize。
+// 值的类型 Obj[Key] 要递归的处理，也就是 DeepCamelize<Obj[Key]>。
+type DeepCamelize<Obj extends Record<string, any>> = 
+    Obj extends unknown[]
+        ? CamelizeArr<Obj>
+        : { 
+            [Key in keyof Obj 
+                as Key extends `${infer First}_${infer Rest}`
+                    ? `${First}${Capitalize<Rest>}`
+                    : Key
+            ] : DeepCamelize<Obj[Key]> 
+        };
+
+// AllKeyPath
+type obj = {
+    aaa_bbb: string;
+    bbb_ccc: [
+        {
+            ccc_ddd: string;
+        },
+        {
+            ddd_eee: string;
+            eee_fff: {
+                fff_ggg: string;
+            }
+        }
+    ]
+}
+
+// type DeepCamelizeRes = {
+//     aaaBbb: string;
+//     bbbCcc: [{
+//         cccDdd: string;
+//     }, {
+//         dddEee: string;
+//         eeeFff: {
+//             fffGgg: string;
+//         };
+//     }];
+// }
+type DeepCamelizeRes = DeepCamelize<obj>;
+```
+
+### 拿到一个索引类型的所有key的路径AllKeyPath
+
+```typescript
+type Obj = {
+    a: {
+        b: {
+            b1: string
+            b2: string
+        }
+        c: {
+            c1: string;
+            c2: string;
+        }
+    },
+}
+
+// 参数 Obj 是待处理的索引类型，通过 Record<string, any> 约束。
+// 用映射类型的语法，遍历 Key，并在 value 部分根据每个 Key 去构造以它为开头的 path。
+// 因为推导出来的 Key 默认是 unknown，而其实明显是个 string，所以 Key extends string 判断一下，后面的分支里 Key 就都是 string 了。
+// 如果 Obj[Key] 依然是个索引类型的话，就递归构造，否则，返回当前的 Key。
+// 我们最终需要的是 value 部分，所以取 [keyof Obj] 的值。keyof Obj 是 key 的联合类型，那么传入之后得到的就是所有 key 对应的 value 的联合类型。
+// 这样就完成了所有 path 的递归生成：
+type AllKeyPath<Obj extends Record<string, any>> = {
+  [Key in keyof Obj]: 
+    Key extends string
+      ? Obj[Key] extends Record<string, any>
+        ? Key | `${Key}.${AllKeyPath<Obj[Key]>}`
+        : Key
+      : never
+}[keyof Obj];
+
+// type AllKeyPathRes = "a" | "a.b" | "a.c" | "a.b.b1" | "a.b.b2" | "a.c.c1" | "a.c.c2"
+type AllKeyPathRes = AllKeyPath<Obj>;
+```
+
+### Defaultize
+
+- 实现这样一个高级类型，对 `A, B` 两个索引类型做合并，如果是只有 `A` 中有的不变，如果是 `A, B` 都有的就变为可选，只有 `B` 中有的也变为可选。
+
+```typescript
+// Pick 出 A、B 中只有 A 有的部分，也就是去 A 中去掉了 B 的 key： Exclude<keyof A, keyof B>。
+// 然后 Pick 出 A、B 都有的部分，也就是 Extract<keyof A, keyof B>。用 Partial 转为可选。
+// 之后 Pick 出只有 B 有的部分，也就是 Exclude<keyof B, keyof A>。用 Partial 转为可选。
+// 最后取交叉类型来把每部分的处理结果合并到一起。
+type Defaultize<A, B> = 
+    & Pick<A, Exclude<keyof A, keyof B>>
+    & Partial<Pick<A, Extract<keyof A, keyof B>>>
+    & Partial<Pick<B, Exclude<keyof B, keyof A>>>
+
+type Copy<Obj extends Record<string, any>> = {
+    [Key in keyof Obj]: Obj[Key]
+}
+
+type A = {
+    aaa: 111,
+    bbb: 222
+};
+
+type B = {
+    bbb: 222,
+    ccc: 333
+}
+
+// type DefaultizeRes = {
+//     aaa: 111;
+//     bbb?: 222 | undefined;
+//     ccc?: 333 | undefined;
+// }
+type DefaultizeRes = Copy<Defaultize<A, B>>;
+```
+
+### zip
+
+- 实现一个 `zip` 函数，对两个数组的元素按顺序两两合并，比如输入 `[1, 2, 3], [4, 5, 6]` 时，返回 `[[1, 4], [2, 5], [3, 6]]` 。定义该函数的类型。
+
+```typescript
+type Zip<One extends unknown[], Other extends unknown[]> = 
+  One extends [infer OneFirst, ...infer Rest1]
+    ? Other extends [infer OtherFirst, ...infer Rest2]
+      ? [[OneFirst, OtherFirst], ...Zip<Rest1, Rest2>]
+      : []
+    : [];
+
+type Mutable<Obj> = {
+  -readonly [Key in keyof Obj]: Obj[Key];
+};
+
+function zip(target: unknown[], source: unknown[]): unknown[];
+
+function zip<Target extends readonly unknown[], Source extends readonly unknown[]>(
+  target: Target,
+  source: Source
+): Zip<Mutable<Target>, Mutable<Source>>;
+
+function zip(target: unknown[], source: unknown[]) {
+  if (!target.length || !source.length) return [];
+
+  const [one, ...rest1] = target;
+  const [other, ...rest2] = source;
+
+  return [[one, other], ...zip(rest1, rest2)];
+}
+
+// const result: [[1, 4], [2, 5], [3, 6]]
+const result = zip([1, 2, 3] as const, [4, 5, 6] as const);
+
+const arr1 = [1, 2, 3];
+const arr2 = [4, '5', 6];
+
+const result2 = zip(arr1, arr2);
+```
+
+### 任意拓展json中的属性字段
+
+- geojson中应该有用。可索引签名可以让索引类型扩展任意数量的符合签名的索引，如果想给任意层级的索引每层都加上可索引签名就要递归处理了。那如果不用类型编程呢？那你就要原封不动的写一个新的索引类型，然后手动给每一层都加上可索引签名，那就麻烦太多了，而且也不通用。这就是类型编程的意义之一，可以根据需要修改类型。
+
+```typescript
+// 项目中定义了接口返回的数据的类型，比如这样：
+// 那么填充数据的时候就要根据类型的定义来写：
+// 但是呢，如果你想扩展一些属性就报错了：
+// 但现在想每层都能灵活扩展一些属性，怎么做呢？
+// 如何能让这个索引类型可以灵活添加一些额外的索引呢？
+// 可以添加一个可索引签名[key: string]: any，也可以 & Record<string, any>， 和 Record<string, any> 取交叉类型。
+// 普通的对象我们知道怎么处理了，那多层的呢？
+// 这样任意层数的索引类型，怎么给每一层都加上 Record<string, any> 呢？
+type Data = {
+    aaa: number;
+    bbb: {
+        ccc: number;
+        ddd: string;
+    },
+    eee: {
+        fff: string;
+        ddd: number;
+    }
+}
+
+// 定义一个 DeepRecord 的高级类型，传入的类型参数 Obj 为一个索引类型，通过 Record<string, any> 约束。
+// 然后通过映射类型的语法构造一个新的索引类型。
+// Key 来自之前的索引类型的 Key，也就是 Key in keyof Obj。
+// Value 要判断是不是索引类型，如果依然是 Record<string, any>，那就递归处理它的值 Obj[Key]，否则直接返回 Obj[Key]。
+// 每一层都要和 Record<string, any> 取交叉类型。
+// 这样就完成了递归让 Obj 的每一层都变得可扩展的目的。
+type DeepRecord<Obj extends Record<string, any>> = {
+    [Key in keyof Obj]: 
+        Obj[Key] extends Record<string, any>
+            ? DeepRecord<Obj[Key]> & Record<string, any>
+            : Obj[Key]
+} & Record<string, any>;
+
+// type res = {
+//     aaa: number;
+//     bbb: {
+//         ccc: number;
+//         ddd: string;
+//     } & Record<string, any>;
+//     eee: {
+//         fff: string;
+//         ddd: number;
+//     } & Record<string, any>;
+// } & Record<string, any>
+type res = DeepRecord<Data>;
+
+const data: Data = {
+    aaa: 1,
+    bbb: {
+        ccc: 1,
+        ddd: 'aaa'
+    },
+    eee: {
+        fff: 'bbb',
+        ddd: 2
+    }
+}
+```
+
+### 一个字段的类型限制其他字段
+
+- 也就是当一个索引为 `'desc' | 'asc'` 的时候，其他索引都是 `false` 。这种类型怎么写呢？
+
+```typescript
+type GenerateType<Keys extends keyof any> = {
+    [Key in Keys]: {
+        [Key2 in Key]: 'desc' | 'asc'
+    } & {
+        [Key3 in Exclude<Keys, Key>]: false
+    }
+}[Keys];
+
+// type res = ({
+//     aaa: "desc" | "asc";
+// } & {
+//     bbb: false;
+//     ccc: false;
+// }) | ({
+//     bbb: "desc" | "asc";
+// } & {
+//     aaa: false;
+//     ccc: false;
+// }) | ({
+//     ccc: "desc" | "asc";
+// } & {
+//     aaa: false;
+//     bbb: false;
+// })
+type res = GenerateType<'aaa' | 'bbb' | 'ccc'>;
+
+const a: res = {
+    aaa: 'asc',
+    bbb: false,
+    ccc: false
+}
+
+const b: res = {
+    aaa: false,
+    bbb: 'desc',
+    ccc: false
+}
+
+const c: res = {
+    aaa: 'asc',
+    bbb: 'desc',
+    ccc: false
+}
+```
 
 ## 八、内置高级类型
 
@@ -1722,7 +2287,6 @@ type CapitalizeRes = Capitalize<'aaa'>;
 type UncapitalizeRes = Uncapitalize<'Aaa'>;
 ```
 
-
 ## 九、infer extends
 
 - Typescript支持 `infer` 类型，可以通过模式匹配的方式，提取一部分类型返回。
@@ -1764,7 +2328,35 @@ type StrToNull<Str> =
 type res3 = StrToNull<'null'>;
 ```
 
-## 十、变
+## 十、satisfies
+
+- 让你用自动推导出的类型，而不是声明的类型，增加灵活性，同时还可以对这个推导出的类型做类型检查，保证安全。但是 `satisfies` 的方式也有它的问题，不能动态扩展索引。
+
+```typescript
+type Obj = {
+    a: number,
+    b: string,
+    [key: string]: any
+}
+
+// const obj: {
+//     a: number;
+//     b: number;
+//     c: number;
+//     d: string;
+// }
+const obj = {
+    a: 1,
+    b: 2,
+    c: 3,
+    d: 'd'
+} satisfies Obj;
+
+// Property 'e' does not exist on type '{ a: number; b: number; c: number; d: string; }'
+obj.e = 1;
+```
+
+## 十一、变
 
 ### 型变
 
